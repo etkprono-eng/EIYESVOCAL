@@ -1,0 +1,118 @@
+#pragma once
+// Pure C++ DSP building blocks (no JUCE dependency, so they can be tested alone).
+#include <vector>
+#include <cmath>
+#include <algorithm>
+
+namespace eiyes
+{
+// Pitch shifter: two delay taps with a Hann crossfade. Good for small shifts (+-12 semitones).
+class PitchShifter
+{
+public:
+    void prepare (double sampleRate)
+    {
+        windowSamples = (float) (0.05 * sampleRate);          // 50 ms window
+        size = (int) windowSamples + 8;
+        buffer.assign ((size_t) size, 0.0f);
+        writePos = 0;
+        phase = 0.0f;
+    }
+
+    float process (float x, float ratio)
+    {
+        buffer[(size_t) writePos] = x;
+
+        float phase2 = phase + 0.5f;
+        if (phase2 >= 1.0f) phase2 -= 1.0f;
+
+        const float out = tap (phase) * window (phase) + tap (phase2) * window (phase2);
+
+        phase += (1.0f - ratio) / windowSamples;
+        while (phase >= 1.0f) phase -= 1.0f;
+        while (phase < 0.0f)  phase += 1.0f;
+
+        if (++writePos >= size) writePos = 0;
+        return out;
+    }
+
+private:
+    float tap (float p) const
+    {
+        const float delay = p * windowSamples + 1.0f;
+        float readPos = (float) writePos - delay;
+        if (readPos < 0.0f) readPos += (float) size;
+        const int i0 = (int) readPos;
+        const float frac = readPos - (float) i0;
+        const int i1 = (i0 + 1 >= size) ? 0 : i0 + 1;
+        return buffer[(size_t) i0] * (1.0f - frac) + buffer[(size_t) i1] * frac;
+    }
+
+    static float window (float p) { return 0.5f * (1.0f - std::cos (6.2831853f * p)); }
+
+    std::vector<float> buffer;
+    int size = 0, writePos = 0;
+    float windowSamples = 1.0f, phase = 0.0f;
+};
+
+// Simple feed-forward compressor with a linked (stereo) detector.
+class Compressor
+{
+public:
+    void prepare (double sampleRate)
+    {
+        attackCoef  = std::exp (-1.0f / (0.005f * (float) sampleRate));
+        releaseCoef = std::exp (-1.0f / (0.080f * (float) sampleRate));
+        env = 0.0f;
+    }
+
+    // Returns the linear gain to apply for the current detector level.
+    float getGain (float detectorLevel, float thresholdDb, float ratio)
+    {
+        const float coef = detectorLevel > env ? attackCoef : releaseCoef;
+        env = coef * env + (1.0f - coef) * detectorLevel;
+
+        const float levelDb = 20.0f * std::log10 (std::max (env, 1.0e-6f));
+        const float over = levelDb - thresholdDb;
+        if (over <= 0.0f) return 1.0f;
+
+        const float reductionDb = over * (1.0f - 1.0f / std::max (ratio, 1.0f));
+        return std::pow (10.0f, -reductionDb / 20.0f);
+    }
+
+private:
+    float attackCoef = 0.0f, releaseCoef = 0.0f, env = 0.0f;
+};
+
+// Feedback delay line (one channel).
+class DelayLine
+{
+public:
+    void prepare (double sampleRate, float maxSeconds = 1.0f)
+    {
+        size = (int) (sampleRate * maxSeconds) + 4;
+        buffer.assign ((size_t) size, 0.0f);
+        writePos = 0;
+    }
+
+    // Returns only the delayed (wet) signal.
+    float process (float x, float delaySamples, float feedback)
+    {
+        delaySamples = std::min (std::max (delaySamples, 1.0f), (float) (size - 3));
+        float readPos = (float) writePos - delaySamples;
+        if (readPos < 0.0f) readPos += (float) size;
+        const int i0 = (int) readPos;
+        const float frac = readPos - (float) i0;
+        const int i1 = (i0 + 1 >= size) ? 0 : i0 + 1;
+        const float wet = buffer[(size_t) i0] * (1.0f - frac) + buffer[(size_t) i1] * frac;
+
+        buffer[(size_t) writePos] = x + wet * feedback;
+        if (++writePos >= size) writePos = 0;
+        return wet;
+    }
+
+private:
+    std::vector<float> buffer;
+    int size = 0, writePos = 0;
+};
+} // namespace eiyes
