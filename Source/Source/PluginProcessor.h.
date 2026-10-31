@@ -1,0 +1,56 @@
+#pragma once
+#include <juce_audio_processors/juce_audio_processors.h>
+#include <juce_dsp/juce_dsp.h>
+#include "Dsp.h"
+
+class EiyesVocalAudioProcessor : public juce::AudioProcessor
+{
+public:
+    EiyesVocalAudioProcessor();
+    ~EiyesVocalAudioProcessor() override = default;
+
+    void prepareToPlay (double sampleRate, int samplesPerBlock) override;
+    void releaseResources() override {}
+    bool isBusesLayoutSupported (const BusesLayout& layouts) const override;
+    void processBlock (juce::AudioBuffer<float>&, juce::MidiBuffer&) override;
+
+    juce::AudioProcessorEditor* createEditor() override;
+    bool hasEditor() const override { return true; }
+
+    const juce::String getName() const override { return "Eiyes Vocal"; }
+    bool acceptsMidi() const override { return false; }
+    bool producesMidi() const override { return false; }
+    bool isMidiEffect() const override { return false; }
+    double getTailLengthSeconds() const override { return 3.0; }
+
+    int getNumPrograms() override { return 1; }
+    int getCurrentProgram() override { return 0; }
+    void setCurrentProgram (int) override {}
+    const juce::String getProgramName (int) override { return {}; }
+    void changeProgramName (int, const juce::String&) override {}
+
+    void getStateInformation (juce::MemoryBlock& destData) override;
+    void setStateInformation (const void* data, int sizeInBytes) override;
+
+    juce::AudioProcessorValueTreeState apvts;
+
+private:
+    static juce::AudioProcessorValueTreeState::ParameterLayout createLayout();
+    float param (const char* id) const { return apvts.getRawParameterValue (id)->load(); }
+    void updateFilters (float hpfHz, float mudDb, float presenceDb, float airDb);
+
+    static constexpr int maxCh = 2;
+    using Filter = juce::dsp::IIR::Filter<float>;
+
+    Filter hpf[maxCh], mud[maxCh], presence[maxCh], air[maxCh], layerHp[maxCh];
+    eiyes::PitchShifter shifter[maxCh];
+    eiyes::DelayLine delayLine[maxCh];
+    eiyes::Compressor compressor;
+    juce::Reverb reverb;
+
+    double sr = 44100.0;
+    float lastHpf = -1.f, lastMud = -100.f, lastPresence = -100.f, lastAir = -100.f;
+    float smoothedRatio = 1.0f, smoothedDelay = 4800.0f, lastOutGain = 1.0f;
+
+    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (EiyesVocalAudioProcessor)
+};
